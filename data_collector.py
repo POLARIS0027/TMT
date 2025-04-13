@@ -219,71 +219,132 @@ class DataCollector:
         )
 
     def _read_and_preprocess_excel(self, file_path):
-        """엑셀 파일 읽기 및 전처리"""
+        """
+        엑셀 파일 읽기 및 전처리.
+        파일 종류(시험표, 버그/QA 목록)에 따라 다른 전처리 수행.
+        - 필수 컬럼 존재 확인
+        - 데이터 타입 변환 (날짜, 숫자)
+        - NaN 값 처리
+        - 외부 목록의 경우 원본 'No' 값 보존
+        정제된 DataFrame 또는 처리 불가 시 None 반환.
+        """
         try:
             config = self.config
             excel_file = pd.ExcelFile(file_path)
             file_name = os.path.basename(file_path)
-            
-            # 내부 버그리스트와 QA리스트는 "一覧" 시트를 읽음
-            if file_name in [config["bug_file_name"], config["qa_file_name"]]:
-                if "一覧" not in excel_file.sheet_names:
-                    st.warning(f"'{file_name}'に'一覧'シートが存在しません。")
-                    return None
-                return pd.read_excel(file_path, sheet_name="一覧", header=0, engine='openpyxl')
-            
-            # 시험표 파일 처리
-            if config["sheet_name"] not in excel_file.sheet_names:
-                st.warning(f"'{file_name}'に'{config['sheet_name']}'シートが存在しません。")
+            is_external_list = file_name in [config["bug_file_name"], config["qa_file_name"]]
+            sheet_name = "一覧" if is_external_list else config["sheet_name"]
+
+            # 1. 시트 존재 확인
+            if sheet_name not in excel_file.sheet_names:
+                st.warning(f"'{file_name}'に'{sheet_name}'シートが存在しません。")
                 return None
 
-            df = pd.read_excel(file_path, sheet_name=config["sheet_name"], header=0, engine='openpyxl')
+            # 2. 데이터 로드 및 컬럼 공백 제거
+            df = pd.read_excel(file_path, sheet_name=sheet_name, header=0, engine='openpyxl')
             df.columns = df.columns.str.strip()
 
-            if config["date_column"] not in df.columns:
-                st.error(f"'{file_name}'に'{config['date_column']}'列が見つかりません。")
+            # 3. 필수 컬럼 존재 확인
+            required_columns = []
+            if is_external_list:
+                # 외부 목록 (버그/QA) 필수 컬럼
+                list_type = "bug" if file_name == config["bug_file_name"] else "qa"
+                # config 키 존재 여부 확인 추가
+                external_cols_key = f"{list_type}_file_columns"
+                if external_cols_key in config:
+                    required_columns = ['No'] + config[external_cols_key]
+                else:
+                    st.error(f"Config 파일에 '{external_cols_key}' 키가 없습니다.")
+                    return None
+            else:
+                # 시험표 필수 컬럼 (config 키 존재 여부 확인)
+                test_id_col = config.get("test_id_column")
+                result_col = config.get("result_column")
+                date_col = config.get("date_column")
+                bug_no_col = config.get("bug_no_column")
+                qa_no_col = config.get("qa_no_column")
+                test_name_col = config.get("test_name_column") # 시험명은 필수는 아님
+                
+                required_columns = [col for col in [test_id_col, result_col, date_col, bug_no_col, qa_no_col] if col] # None 제외
+                
+                if not test_name_col or test_name_col not in df.columns:
+                     st.warning(f"'{file_name}'に'{test_name_col or 'test_name_column 설정값'}'列がありません。試験名なしで処理を続行します。")
+                     # 시험명 컬럼이 없거나 config에 설정 안됐으면 빈 컬럼 추가
+                     df[test_name_col if test_name_col else '시험명_임시'] = '' 
+                     # 임시 이름 사용 시 config에도 반영해야 할 수 있으나, 여기서는 일단 추가만 함
+                     # 또는 test_name_col을 None으로 두고 후처리에서 처리
+                elif test_name_col: # 시험명 컬럼이 존재하면 required_columns에 추가하지 않아도 됨
+                    pass
+
+            missing_cols = [col for col in required_columns if col not in df.columns]
+            if missing_cols:
+                st.error(f"'{file_name}' ({sheet_name}シート)に必要なカラムがありません: {', '.join(missing_cols)}")
                 return None
-            
-            df[config["date_column"]] = pd.to_datetime(df[config["date_column"]], errors='coerce')
-            
-            # 시험 결과 유효성 검사
-            invalid_results = df[~df[config["result_column"]].isin(self.categories) & df[config["result_column"]].notna()]
-            if not invalid_results.empty:
-                for idx, row in invalid_results.iterrows():
-                    self.invalid_results.append({
-                        'file_name': file_name,
-                        'test_id': row[config['test_id_column']],
-                        'result': row[config['result_column']]
-                    })
-            
-            # QA 상태와 QA_DB_NO 검사
-            qa_without_no = df[
-                (df[config["result_column"]] == 'QA') & 
-                (df[config["qa_no_column"]].isna() | (df[config["qa_no_column"]] == ''))
-            ]
-            if not qa_without_no.empty:
-                for idx, row in qa_without_no.iterrows():
-                    self.qa_without_no.append({
-                        'file_name': file_name,
-                        'test_id': row[config['test_id_column']]
-                    })
-            
-            # NG/BK 상태와 Bug_DB_NO 검사
-            bug_without_no = df[
-                (df[config["result_column"]].isin(['NG', 'BK'])) & 
-                (df[config["bug_no_column"]].isna() | (df[config["bug_no_column"]] == ''))
-            ]
-            if not bug_without_no.empty:
-                for idx, row in bug_without_no.iterrows():
-                    self.bug_without_no.append({
-                        'file_name': file_name,
-                        'test_id': row[config['test_id_column']]
-                    })
-            
+
+            # 4. 데이터 타입 변환 및 NaN 처리
+            if is_external_list:
+                # 외부 목록 처리
+                df['No_original'] = df['No'] # 원본 'No' 값 보존
+                df['No'] = pd.to_numeric(df['No'], errors='coerce') # 숫자 변환 시도
+                initial_rows = len(df)
+                df = df.dropna(subset=['No']) # 숫자 변환 실패(NaN) 행 제거
+                if len(df) < initial_rows:
+                     st.warning(f"'{file_name}'의 'No'カラムに数値でない、または空の値が含まれる行を削除しました。")
+                if not df.empty:
+                     df['No'] = df['No'].astype(int) # 정수형으로 변환
+            else:
+                # 시험표 처리
+                date_col = config["date_column"] # 이미 존재 확인됨
+                df[date_col] = pd.to_datetime(df[date_col], errors='coerce') # 날짜 변환 시도
+                initial_rows = len(df)
+                df = df.dropna(subset=[date_col]) # 날짜 변환 실패(NaT) 행 제거
+                if len(df) < initial_rows:
+                    st.warning(f"'{file_name}'의 '{date_col}'カラムに日付でない、または空の値が含まれる行を削除しました。")
+
+                # 시험 결과 유효성 검사 (기존 로직 유지, result_col 사용)
+                result_col = config["result_column"]
+                invalid_results = df[~df[result_col].isin(self.categories) & df[result_col].notna()]
+                if not invalid_results.empty:
+                    test_id_col = config["test_id_column"]
+                    for idx, row in invalid_results.iterrows():
+                        self.invalid_results.append({
+                            'file_name': file_name,
+                            'test_id': row[test_id_col],
+                            'result': row[result_col]
+                        })
+                    st.warning(f"'{file_name}'に不正な試験結果({invalid_results[result_col].unique()})が含まれています。")
+
+                # QA/Bug 번호 누락 검사 (기존 로직 유지, 각 컬럼 사용)
+                qa_no_col = config["qa_no_column"]
+                test_id_col = config["test_id_column"]
+                qa_without_no = df[
+                    (df[result_col] == 'QA') &
+                    (df[qa_no_col].isna() | (df[qa_no_col] == ''))
+                ]
+                if not qa_without_no.empty:
+                    for idx, row in qa_without_no.iterrows():
+                        self.qa_without_no.append({
+                            'file_name': file_name,
+                            'test_id': row[test_id_col]
+                        })
+
+                bug_no_col = config["bug_no_column"]
+                bug_without_no = df[
+                    (df[result_col].isin(['NG', 'BK'])) &
+                    (df[bug_no_col].isna() | (df[bug_no_col] == ''))
+                ]
+                if not bug_without_no.empty:
+                    for idx, row in bug_without_no.iterrows():
+                        self.bug_without_no.append({
+                            'file_name': file_name,
+                            'test_id': row[test_id_col]
+                        })
+
+            # 5. 정제된 데이터프레임 반환
             return df
-            
+
         except Exception as e:
-            st.error(f"'{os.path.basename(file_path)}'の読み込み中にエラーが発生しました: {str(e)}")
+            st.error(f"'{os.path.basename(file_path)}' ({sheet_name}シート) の読み込み・前処理中にエラーが発生しました: {str(e)}")
             return None
 
     # '試験結果' 컬럼의 값을 config["result_column"]로 처리하여 카테고리별 개수를 계산
@@ -341,20 +402,47 @@ class DataCollector:
         creator.qa_data = self.qa_data  # 내부 QA리스트 데이터 전달
         return creator.create_table()
 
-    # 'OK'인 데이터를 날짜별로 집계한 테이블 생성 (config 사용)
     def _create_ok_table(self):
+        """
+        'OK' 결과를 날짜별로 집계한 테이블 생성.
+        입력 merged_df는 이미 전처리되었다고 가정 (날짜 컬럼 유효, NaT 없음).
+        """
         config = self.config
-        if self.merged_df.empty:
-            return pd.DataFrame()
-        pivot_table = self.merged_df.pivot_table(
-            index=config["date_column"],
-            columns=config["result_column"],
-            values=config["test_id_column"],
-            aggfunc='count',
-            fill_value=0
-        )
-        return pivot_table.reset_index()
-    
+        date_col = config["date_column"]
+        result_col = config["result_column"]
+        test_id_col = config["test_id_column"]
+        final_cols = [date_col, 'OK'] # 최종 반환할 컬럼
+
+        # 입력 데이터프레임 및 필수 컬럼 존재 확인
+        # date_col은 전처리 단계에서 확인됨
+        if self.merged_df.empty or result_col not in self.merged_df.columns or test_id_col not in self.merged_df.columns:
+            # 필수 컬럼 없으면 집계 불가
+            if result_col not in self.merged_df.columns: st.error(f"OK 테이블 생성 불가: '{result_col}' 컬럼이 없습니다.")
+            if test_id_col not in self.merged_df.columns: st.error(f"OK 테이블 생성 불가: '{test_id_col}' 컬럼이 없습니다.")
+            return pd.DataFrame(columns=final_cols)
+
+        # pivot_table 생성 (오류 가능성 낮음)
+        try:
+            pivot_table = self.merged_df.pivot_table(
+                index=date_col,
+                columns=result_col,
+                values=test_id_col,
+                aggfunc='count',
+                fill_value=0
+            )
+        except Exception as e: # 예상치 못한 오류 처리
+             st.error(f"OK テーブル作成中に予期せぬエラーが発生しました: {e}")
+             return pd.DataFrame(columns=final_cols)
+
+        # 'OK' 컬럼이 없는 경우 처리
+        if 'OK' not in pivot_table.columns:
+            pivot_table['OK'] = 0
+
+        # 필요한 컬럼('OK')만 선택하고 인덱스(날짜)를 컬럼으로 변환
+        ok_df = pivot_table[['OK']].reset_index()
+
+        return ok_df
+
     def _compute_ok(self, ok_table: pd.DataFrame, calculator: OKCalculator) -> pd.DataFrame:
         """OK 계산을 수행하는 메서드"""
         return calculator.calculate(ok_table, self.config)
