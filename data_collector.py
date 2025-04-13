@@ -344,17 +344,38 @@ class DataCollector:
     # 'OK'인 데이터를 날짜별로 집계한 테이블 생성 (config 사용)
     def _create_ok_table(self):
         config = self.config
-        if self.merged_df.empty:
-            return pd.DataFrame()
-        pivot_table = self.merged_df.pivot_table(
-            index=config["date_column"],
-            columns=config["result_column"],
-            values=config["test_id_column"],
-            aggfunc='count',
-            fill_value=0
-        )
-        return pivot_table.reset_index()
-    
+        if self.merged_df.empty or config["date_column"] not in self.merged_df.columns:
+            # merged_df가 비어있거나 필수 컬럼이 없으면 빈 DF 반환
+            return pd.DataFrame(columns=[config["date_column"], 'OK']) 
+
+        # 날짜 컬럼 NaT 제거 (pivot_table 오류 방지)
+        df_filtered = self.merged_df.dropna(subset=[config["date_column"]])
+        if df_filtered.empty:
+             return pd.DataFrame(columns=[config["date_column"], 'OK'])
+
+        # pivot_table 생성 시도
+        try:
+            pivot_table = df_filtered.pivot_table(
+                index=config["date_column"],
+                columns=config["result_column"],
+                values=config["test_id_column"],
+                aggfunc='count',
+                fill_value=0
+            )
+        except KeyError as e:
+             # 필요한 컬럼(result_column, test_id_column)이 없는 경우
+             st.error(f"OK テーブル作成中にエラーが発生しました: 必要なカラムが見つかりません - {e}")
+             return pd.DataFrame(columns=[config["date_column"], 'OK']) 
+        
+        # 'OK' 컬럼이 없는 경우 추가
+        if 'OK' not in pivot_table.columns:
+            pivot_table['OK'] = 0
+            
+        # 필요한 컬럼만 선택하여 반환 (다른 결과 컬럼은 필요 없음)
+        ok_df = pivot_table[['OK']].reset_index()
+        
+        return ok_df
+
     def _compute_ok(self, ok_table: pd.DataFrame, calculator: OKCalculator) -> pd.DataFrame:
         """OK 계산을 수행하는 메서드"""
         return calculator.calculate(ok_table, self.config)
