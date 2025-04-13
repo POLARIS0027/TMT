@@ -7,13 +7,20 @@ class TableCreator:
         self.config = config
         self.merged_df = merged_df
         self._find_external_file = find_external_file
+        # 자식 클래스에서 정의할 속성들
+        self.id_column_key: str = ""       # 예: "bug_no_column"
+        self.regex_key: str = ""           # 예: "bug_regex"
+        self.template_key: str = ""        # 예: "bug_pattern_template"
+        self.external_columns_key: str = "" # 예: "bug_file_columns"
+        self.merge_how: str = ""           # 'left' 또는 'right'
+        self.desired_order: list[str] = [] # 최종 컬럼 순서
 
     def create_table(self):
         """테이블 생성"""
         filtered_df = self._filter_data()
         pivot_df = self._create_pivot_table(filtered_df)
         external_data = self._load_external_data()
-        return self._merge_data(pivot_df, external_data)
+        return self._merge_and_finalize(pivot_df, external_data)
 
     def _filter_data(self):
         raise NotImplementedError
@@ -22,348 +29,285 @@ class TableCreator:
         raise NotImplementedError
         
     def _load_external_data(self):
-        raise NotImplementedError
-        
-    def _merge_data(self, pivot_df, external_data):
+        # 자식 클래스가 external_data를 로드하고,
+        # 로드 실패 시 None을 반환하도록 구현해야 함.
+        # 각 자식 클래스에 이미 구현되어 있음.
         raise NotImplementedError
 
-class BugTableCreator(TableCreator):
-    def __init__(self, config, merged_df, find_external_file):
-        super().__init__(config, merged_df, find_external_file)
-        self.bug_data = None  # 내부 버그리스트 데이터
+    def _extract_number(self, db_no):
+        """ID 컬럼 값에서 숫자 추출 (정규식 사용)"""
+        if pd.isna(db_no):
+            return None
+        # self.regex_key는 자식 클래스에서 설정됨
+        match = re.search(self.config[self.regex_key], str(db_no))
+        return int(match.group(1)) if match else None
 
-    def _filter_data(self):
-        return self.merged_df[self.merged_df[self.config["result_column"]].isin(['NG', 'BK'])]
-        
-    def _create_pivot_table(self, filtered_df):
-        pivot_count = filtered_df.pivot_table(
-            index=self.config["bug_no_column"],
-            values=self.config["test_id_column"],
-            aggfunc='count'
-        ).reset_index().rename(columns={self.config["test_id_column"]: '件数'})
-        
-        pivot_test_names = filtered_df.groupby(self.config["bug_no_column"])[self.config["test_name_column"]] \
-            .agg(lambda x: ', '.join(sorted(set(x.dropna().astype(str))))) \
-            .reset_index(name='_temp_test_names')
-        
-        pivot_test_names = pivot_test_names.rename(columns={'_temp_test_names': self.config["test_name_column"]})
-        
-        return pd.merge(pivot_count, pivot_test_names, on=self.config["bug_no_column"], how='left')
-        
-    def _load_external_data(self):
-        # 내부 버그리스트가 이미 로드되어 있으면 그것을 사용
-        if self.bug_data is not None:
-            return self.bug_data[self.config["bug_file_columns"]]
-            
-        # 없으면 파일에서 로드
-        bug_list_path = self._find_external_file(self.config["bug_file_name"])
-        if bug_list_path is None:
-            st.error(f"{self.config['bug_file_name']} ファイルが見つかりません。")
-            return None
-            
-        try:
-            bug_list_df = pd.read_excel(bug_list_path, sheet_name="一覧", engine='openpyxl')
-            return bug_list_df[self.config["bug_file_columns"]]
-        except Exception as e:
-            st.error(f"{self.config['bug_file_name']} ファイルロード失敗: {e}")
-            return None
-            
-    def _merge_data(self, pivot_df, external_data):
-        # 1. external_data 유효성 검사 및 준비
+    def _merge_and_finalize(self, pivot_df, external_data):
+        """
+        공통 Merge 및 후처리 로직.
+        입력 pivot_df와 external_data는 기본적인 전처리가 완료되었다고 가정.
+        (예: external_data의 'No'는 숫자형이고 NaN 없음, 원본 'No'는 'No_original'에 있음)
+        """
+        id_col_name = self.config[self.id_column_key]
+        test_name_col_name = self.config["test_name_column"]
+        external_file_cols = self.config[self.external_columns_key]
+        id_template = self.config[self.template_key]
+
+        # 1. external_data 유효성 검사 (None 처리)
         if external_data is None:
-            # external_data가 없으면 pivot_df를 반환하되, 예상 컬럼 구조 맞추기
-            final_cols = [self.config["bug_no_column"], "件数", self.config["test_name_column"]]
-            for col in final_cols:
-                if col not in pivot_df.columns:
-                    pivot_df[col] = 0 if col == "件数" else (None if col == self.config["bug_no_column"] else "")
-            # bug_file_columns는 없으므로 추가하지 않음
-            return pivot_df[final_cols].copy()
+            # (기존 로직 유지)
+            if self.merge_how == 'right':
+                 final_cols = [id_col_name] + [col for col in external_file_cols if col != 'No'] + ["件数", test_name_col_name]
+                 return pd.DataFrame(columns=final_cols)
+            else: # QA
+                 final_cols = [id_col_name, "件数", test_name_col_name]
+                 # pivot_df에 필요한 컬럼이 없을 수 있으므로 확인 후 추가
+                 for col in final_cols:
+                     if col not in pivot_df.columns:
+                         pivot_df[col] = 0 if col == "件数" else (None if col == id_col_name else "")
+                 # external_data가 없으면 external_file_columns는 추가 X
+                 return pivot_df[final_cols].copy() if not pivot_df.empty else pd.DataFrame(columns=final_cols)
 
-        # external_data의 'No' 컬럼 정리
-        external_data = external_data.rename(columns={col: col.strip() for col in external_data.columns})
-        if 'No' not in external_data.columns:
-            st.error(f"{self.config['bug_file_name']} に 'No' カラムが見つかりません。")
-            # 'No' 컬럼이 없으면 병합 불가, 빈 데이터프레임 반환
-            return pd.DataFrame(columns=[self.config["bug_no_column"]] + self.config["bug_file_columns"] + ["件数", self.config["test_name_column"]])
+        # external_data의 'No' 컬럼 숫자 변환 및 NaN 처리는 DataCollector에서 이미 수행됨
+        # external_data가 비어있는 경우도 DataCollector에서 처리되어 여기서는 체크 불필요
 
-        external_data['No_original'] = external_data['No'] # 원본 No 유지
-        external_data['No'] = pd.to_numeric(external_data['No'], errors='coerce')
-        external_data = external_data.dropna(subset=['No'])
-        if not external_data.empty:
-             external_data['No'] = external_data['No'].astype(int)
-
-        if external_data.empty:
-            # 유효한 external_data가 없으면 빈 DataFrame 반환
-            final_columns = [self.config["bug_no_column"]] + [col for col in self.config["bug_file_columns"] if col != 'No'] + ["件数", self.config["test_name_column"]]
-            return pd.DataFrame(columns=final_columns)
-
-        # 2. pivot_df 준비 (BugNumber 추출)
-        if not pivot_df.empty:
-            def extract_bug_number(bug_db_no):
-                if pd.isna(bug_db_no):
-                    return None
-                match = re.search(self.config["bug_regex"], str(bug_db_no))
-                return int(match.group(1)) if match else None
-
-            pivot_df['BugNumber'] = pivot_df[self.config["bug_no_column"]].apply(extract_bug_number)
-            pivot_df = pivot_df.dropna(subset=['BugNumber'])
+        # 2. pivot_df 준비 (ID Number 추출)
+        temp_id_number_col = 'IDNumber' # 임시 컬럼명
+        if not pivot_df.empty and id_col_name in pivot_df.columns:
+            pivot_df[temp_id_number_col] = pivot_df[id_col_name].apply(self._extract_number)
+            pivot_df = pivot_df.dropna(subset=[temp_id_number_col]) # Regex 매칭 안된 경우 NaN 제거
             if not pivot_df.empty:
-                pivot_df['BugNumber'] = pivot_df['BugNumber'].astype(int)
+                pivot_df[temp_id_number_col] = pivot_df[temp_id_number_col].astype(int)
         else:
-            # pivot_df가 처음부터 비어있으면 필요한 컬럼 추가
-            pivot_df = pd.DataFrame(columns=[self.config["bug_no_column"], '件数', self.config["test_name_column"], 'BugNumber'])
+            # pivot_df가 비거나 id_col_name이 없으면 빈 DF로 초기화
+             pivot_df = pd.DataFrame(columns=[id_col_name, '件数', test_name_col_name, temp_id_number_col])
 
 
-        # 3. Merge 수행 (external_data 기준 right merge)
-        # pivot_df가 비어있어도 external_data 기준으로 병합됨
+        # 3. Merge 수행
+        # external_data의 'No'는 이미 숫자형임
+        # pivot_df의 temp_id_number_col도 숫자형임
         merged_result = pd.merge(
             pivot_df,
-            external_data,
-            left_on='BugNumber', right_on='No',
-            how='right',
-            suffixes=('_pivot', '_external') # 충돌 시 컬럼명 구분
-        )
-
-        # 4. 컬럼 정리 및 값 채우기
-        # '件数' 컬럼 처리
-        count_col = '件数_pivot' if '件数_pivot' in merged_result.columns else '件数'
-        if count_col in merged_result.columns:
-            merged_result['件数'] = merged_result[count_col].fillna(0).astype(int)
-        else:
-            merged_result['件数'] = 0
-
-        # 'test_name_column' 처리
-        test_name_col_config = self.config["test_name_column"]
-        test_name_col_pivot = test_name_col_config + '_pivot'
-        if test_name_col_pivot in merged_result.columns:
-            merged_result[test_name_col_config] = merged_result[test_name_col_pivot].fillna('')
-        elif test_name_col_config in merged_result.columns: # pivot_df가 비어있을 때 external_data에 같은 이름 컬럼 있으면 유지될수도?
-             merged_result[test_name_col_config] = merged_result[test_name_col_config].fillna('')
-        else:
-            merged_result[test_name_col_config] = ''
-
-        # 'bug_no_column' 생성 (external_data의 원본 No 기준)
-        # merge 후 external 데이터의 No는 'No' 또는 'No_external' 일 수 있음
-        # 여기서는 external_data에서 미리 복사해둔 'No_original' 사용
-        no_original_col = 'No_original_external' if 'No_original_external' in merged_result.columns else 'No_original'
-        merged_result[self.config["bug_no_column"]] = merged_result[no_original_col].apply(
-             lambda no: self.config["bug_pattern_template"].replace("{Int}", str(no)) if pd.notna(no) else None
-        )
-
-        # 5. 최종 컬럼 선택 및 순서 지정
-        # 원하는 최종 컬럼 순서 정의
-        desired_order = [
-            self.config["bug_no_column"], 
-            "JIRA#", 
-            "件数", 
-            "概要", 
-            self.config["test_name_column"], 
-            "ステータス"
-        ]
-
-        # merge 결과에 존재하는 컬럼 이름 확인 (suffix 고려)
-        final_cols_mapping = {}
-        for col_name in desired_order:
-            col_suffixed_pivot = col_name + '_pivot'
-            col_suffixed_external = col_name + '_external'
-            
-            if col_name in merged_result.columns:
-                final_cols_mapping[col_name] = col_name
-            elif col_suffixed_pivot in merged_result.columns: # pivot에서 온 컬럼 (件数, test_name_column 등)
-                 final_cols_mapping[col_name] = col_suffixed_pivot
-            elif col_suffixed_external in merged_result.columns: # external_data에서 온 컬럼
-                 final_cols_mapping[col_name] = col_suffixed_external
-            # bug_no_column은 merge 후 직접 생성했으므로 suffix 없음
-            elif col_name == self.config["bug_no_column"] and col_name in merged_result.columns:
-                 final_cols_mapping[col_name] = col_name
-
-        # 원하는 순서대로 실제 존재하는 컬럼 리스트 생성
-        final_cols_existing_suffixed = [final_cols_mapping[col] for col in desired_order if col in final_cols_mapping]
-        
-        # 존재하는 컬럼만 선택하고 복사
-        merged_result = merged_result[final_cols_existing_suffixed].copy()
-
-        # 컬럼 이름에서 suffix 제거
-        merged_result.columns = [col.replace('_pivot', '').replace('_external', '') for col in merged_result.columns]
-
-        # 최종 순서 확인 (디버깅용, 필요시 주석 해제)
-        # print("Final Bug Table Columns:", merged_result.columns.tolist())
-        
-        # 건수가 0인 행 제외
-        merged_result = merged_result[merged_result['件数'] > 0]
-        
-        return merged_result
-
-class QATableCreator(TableCreator):
-    def __init__(self, config, merged_df, find_external_file):
-        super().__init__(config, merged_df, find_external_file)
-        self.qa_data = None  # 내부 QA리스트 데이터
-
-    def _filter_data(self):
-        return self.merged_df[self.merged_df[self.config["result_column"]].isin(['QA'])]
-        
-    def _create_pivot_table(self, filtered_df):
-        pivot_count = filtered_df.pivot_table(
-            index=self.config["qa_no_column"],
-            values=self.config["test_id_column"],
-            aggfunc='count'
-        ).reset_index().rename(columns={self.config["test_id_column"]: '件数'})
-        
-        # groupby().apply() 대신 groupby().agg() 사용 및 reset_index 이름 충돌 방지
-        pivot_test_names = filtered_df.groupby(self.config["qa_no_column"])[self.config["test_name_column"]] \
-            .agg(lambda x: ', '.join(sorted(set(x.dropna().astype(str))))) \
-            .reset_index(name='_temp_test_names') # 임시 이름 지정
-        
-        # 임시 이름 -> 원래 컬럼 이름으로 변경
-        pivot_test_names = pivot_test_names.rename(columns={'_temp_test_names': self.config["test_name_column"]})
-        
-        return pd.merge(pivot_count, pivot_test_names, on=self.config["qa_no_column"], how='left')
-        
-    def _load_external_data(self):
-        # 내부 QA리스트가 이미 로드되어 있으면 그것을 사용
-        if self.qa_data is not None:
-            return self.qa_data[self.config["qa_file_columns"]]
-            
-        # 없으면 파일에서 로드
-        qa_list_path = self._find_external_file(self.config["qa_file_name"])
-        if qa_list_path is None:
-            st.error(f"{self.config['qa_file_name']} ファイルが見つかりません")
-            return None
-            
-        try:
-            qa_list_df = pd.read_excel(qa_list_path, sheet_name="一覧", engine='openpyxl')
-            return qa_list_df[self.config["qa_file_columns"]]
-        except Exception as e:
-            st.error(f"{self.config['qa_file_name']} ファイルロード失敗: {e}")
-            return None
-            
-    def _merge_data(self, pivot_df, external_data):
-        # 1. external_data 유효성 검사 및 준비
-        if external_data is None:
-            # external_data가 없으면 pivot_df를 반환하되, 예상 컬럼 구조 맞추기
-            final_cols = [self.config["qa_no_column"], "件数", self.config["test_name_column"]]
-            for col in final_cols:
-                if col not in pivot_df.columns:
-                    pivot_df[col] = 0 if col == "件数" else (None if col == self.config["qa_no_column"] else "")
-            # qa_file_columns는 없으므로 추가하지 않음
-            return pivot_df[final_cols].copy()
-
-        # external_data의 'No' 컬럼 정리
-        external_data = external_data.rename(columns={col: col.strip() for col in external_data.columns})
-        if 'No' not in external_data.columns:
-            st.error(f"{self.config['qa_file_name']} に 'No' カラムが見つかりません。")
-            return pd.DataFrame(columns=[self.config["qa_no_column"]] + self.config["qa_file_columns"] + ["件数", self.config["test_name_column"]])
-
-        external_data['No_original'] = external_data['No'] # 원본 No 유지
-        external_data['No'] = pd.to_numeric(external_data['No'], errors='coerce')
-        external_data = external_data.dropna(subset=['No'])
-        if not external_data.empty:
-             external_data['No'] = external_data['No'].astype(int)
-
-        if external_data.empty:
-            # 유효한 external_data가 없으면 빈 DataFrame 반환
-            final_columns = [self.config["qa_no_column"]] + [col for col in self.config["qa_file_columns"] if col != 'No'] + ["件数", self.config["test_name_column"]]
-            return pd.DataFrame(columns=final_columns)
-
-        # 2. pivot_df 준비 (QANumber 추출)
-        if not pivot_df.empty:
-            def extract_qa_number(qa_db_no):
-                if pd.isna(qa_db_no):
-                    return None
-                match = re.search(self.config["qa_regex"], str(qa_db_no))
-                return int(match.group(1)) if match else None
-
-            pivot_df['QANumber'] = pivot_df[self.config["qa_no_column"]].apply(extract_qa_number)
-            pivot_df = pivot_df.dropna(subset=['QANumber'])
-            if not pivot_df.empty:
-                pivot_df['QANumber'] = pivot_df['QANumber'].astype(int)
-        else:
-            # pivot_df가 처음부터 비어있으면 필요한 컬럼 추가
-            pivot_df = pd.DataFrame(columns=[self.config["qa_no_column"], '件数', self.config["test_name_column"], 'QANumber'])
-
-        # 3. Merge 수행 (pivot_df 기준 left merge)
-        # QA는 pivot_df(시험 결과에 있는 QA 항목) 기준으로 병합
-        merged_result = pd.merge(
-            pivot_df,
-            external_data,
-            left_on='QANumber', right_on='No',
-            how='left', # pivot_df 기준 병합
+            external_data, # 'No', 'No_original' 및 external_file_columns 포함
+            left_on=temp_id_number_col, right_on='No', # 숫자형 ID로 조인
+            how=self.merge_how,
             suffixes=('_pivot', '_external')
         )
 
         # 4. 컬럼 정리 및 값 채우기
-        # '件数' 컬럼 처리 (pivot_df에 항상 있어야 함)
+        # '件数' 컬럼 처리 (기존 로직 유지)
         count_col = '件数_pivot' if '件数_pivot' in merged_result.columns else '件数'
         if count_col in merged_result.columns:
             merged_result['件数'] = merged_result[count_col].fillna(0).astype(int)
-            # pivot에서 온 件数 컬럼은 이름 변경 없이 유지 (rename에서 이미 件数로 바뀜)
+            if count_col != '件数': merged_result = merged_result.drop(columns=[count_col])
         else:
-            # Left merge 이므로 pivot_df가 비어있지 않다면 件数는 있어야 함. 비어있으면 merged_result도 비어있음.
-            merged_result['件数'] = 0 # merged_result가 비어있지 않는데 件数 컬럼이 없는 예외 케이스 대비
+            merged_result['件数'] = 0
 
-        # 'test_name_column' 처리 (pivot_df에 있어야 함)
-        test_name_col_config = self.config["test_name_column"]
-        test_name_col_pivot = test_name_col_config + '_pivot'
+        # 'test_name_column' 처리 (기존 로직 유지)
+        test_name_col_pivot = test_name_col_name + '_pivot'
         if test_name_col_pivot in merged_result.columns:
-            merged_result[test_name_col_config] = merged_result[test_name_col_pivot].fillna('')
-        elif test_name_col_config not in merged_result.columns:
-             merged_result[test_name_col_config] = '' # 컬럼 자체가 없는 경우 생성
-        else: # suffix 없이 존재하는 경우
-             merged_result[test_name_col_config] = merged_result[test_name_col_config].fillna('')
+            merged_result[test_name_col_name] = merged_result[test_name_col_pivot].fillna('')
+            merged_result = merged_result.drop(columns=[test_name_col_pivot])
+        elif test_name_col_name not in merged_result.columns:
+             merged_result[test_name_col_name] = ''
+        else:
+             merged_result[test_name_col_name] = merged_result[test_name_col_name].fillna('')
 
-        # 'qa_no_column' 처리 (pivot_df에 있어야 함)
-        # pivot_df에서 온 qa_no_column을 그대로 사용. merge 시 이름 충돌 없었으면 _pivot 안붙음
-        qa_no_col_config = self.config["qa_no_column"]
-        qa_no_col_pivot = qa_no_col_config + '_pivot'
-        if qa_no_col_pivot in merged_result.columns:
-             merged_result[qa_no_col_config] = merged_result[qa_no_col_pivot]
-        elif qa_no_col_config not in merged_result.columns and not merged_result.empty:
-             # QANumber와 external No로 다시 생성 시도 (비추천)
-             # 여기서는 pivot_df에 qa_no_column이 있다고 가정
-             st.warning(f"QA Merge 결과에서 {qa_no_col_config} 컬럼을 찾을 수 없습니다.")
-             merged_result[qa_no_col_config] = None
+        # 'id_column' 생성/처리
+        # external_data에서 온 'No_original' 컬럼은 항상 존재한다고 가정 (DataCollector에서 추가됨)
+        no_original_col = 'No_original_external' if 'No_original_external' in merged_result.columns else 'No_original'
+        
+        if self.merge_how == 'right': # Bug: external 기준, No_original 사용
+            if no_original_col in merged_result.columns:
+                 merged_result[id_col_name] = merged_result[no_original_col].apply(
+                     lambda no: id_template.replace("{Int}", str(no)) if pd.notna(no) else None
+                 )
+                 # No_original 사용 후 제거는 최종 컬럼 선택에서 처리
+            else:
+                 merged_result[id_col_name] = None
+                 st.warning(f"Could not find 'No_original' column ({no_original_col}) after merge for ID generation.")
+            # 임시 IDNumber 및 external 'No' 제거 (기존 로직 유지)
+            external_no_col = 'No_external' if 'No_external' in merged_result.columns else 'No'
+            cols_to_drop = [temp_id_number_col + '_pivot', temp_id_number_col, external_no_col, no_original_col]
 
-        # 5. 최종 컬럼 선택 및 순서 지정
-        # 원하는 최종 컬럼 순서 정의
-        desired_order = [
-            self.config["qa_no_column"], 
-            "件数", 
-            "質問者", 
-            "コメント", 
-            "回答", 
-            self.config["test_name_column"], 
-            "ステータス"
+        else: # QA: pivot 기준, pivot의 id_col 사용
+            id_col_pivot = id_col_name + '_pivot'
+            if id_col_pivot in merged_result.columns:
+                 merged_result[id_col_name] = merged_result[id_col_pivot]
+                 # ID 컬럼 이름 정리가 되었으므로 _pivot 버전 제거는 최종 단계에서 처리
+            elif id_col_name not in merged_result.columns and not merged_result.empty:
+                 st.warning(f"Could not find original ID column ({id_col_name} or {id_col_pivot}) after merge.")
+                 merged_result[id_col_name] = None
+            # 임시 IDNumber 및 external 'No', 'No_original' 제거 (기존 로직 유지)
+            external_no_col = 'No_external' if 'No_external' in merged_result.columns else 'No'
+            cols_to_drop = [temp_id_number_col + '_pivot', temp_id_number_col, external_no_col, no_original_col]
+
+        # 실제로 존재하는 임시/중복 컬럼만 제거
+        merged_result = merged_result.drop(columns=[col for col in cols_to_drop if col in merged_result.columns], errors='ignore')
+
+
+        # 5. 최종 컬럼 선택 및 순서 지정 (기존 로직 유지)
+        final_cols_mapping = {}
+        for col_name in self.desired_order:
+            # external에서 온 컬럼은 _external suffix 확인
+            col_suffixed_external = col_name + '_external'
+            if col_name == id_col_name or col_name == '件数' or col_name == test_name_col_name:
+                 if col_name in merged_result.columns: final_cols_mapping[col_name] = col_name
+            elif col_suffixed_external in merged_result.columns:
+                 final_cols_mapping[col_name] = col_suffixed_external
+            elif col_name in merged_result.columns: # suffix 없이 external에서 온 경우
+                final_cols_mapping[col_name] = col_name
+
+        final_cols_existing_suffixed = [final_cols_mapping[col] for col in self.desired_order if col in final_cols_mapping]
+
+        if not final_cols_existing_suffixed:
+             return pd.DataFrame(columns=self.desired_order)
+
+        merged_result = merged_result[final_cols_existing_suffixed].copy()
+        merged_result.columns = [col.replace('_external', '') for col in merged_result.columns]
+
+        # 6. 건수가 0인 행 제외 (기존 로직 유지)
+        if '件数' in merged_result.columns:
+             merged_result = merged_result[merged_result['件数'] > 0].copy()
+
+        return merged_result
+
+
+class BugTableCreator(TableCreator):
+    def __init__(self, config, merged_df, find_external_file):
+        super().__init__(config, merged_df, find_external_file)
+        self.bug_data = None
+
+        self.id_column_key = "bug_no_column"
+        self.regex_key = "bug_regex"
+        self.template_key = "bug_pattern_template"
+        self.external_columns_key = "bug_file_columns"
+        self.merge_how = "right"
+        self.desired_order = [
+            self.config[self.id_column_key],
+            "JIRA#", "件数", "概要",
+            self.config["test_name_column"], "ステータス"
         ]
 
-        # merge 결과에 존재하는 컬럼 이름 확인 (suffix 고려)
-        final_cols_mapping = {}
-        for col_name in desired_order:
-            col_suffixed_pivot = col_name + '_pivot'
-            col_suffixed_external = col_name + '_external'
-            
-            if col_name in merged_result.columns: # suffix 없이 존재 (qa_no_column 등)
-                final_cols_mapping[col_name] = col_name
-            elif col_suffixed_pivot in merged_result.columns: # pivot에서 온 컬럼 (件数, test_name_column 등)
-                 final_cols_mapping[col_name] = col_suffixed_pivot
-            elif col_suffixed_external in merged_result.columns: # external_data에서 온 컬럼
-                 final_cols_mapping[col_name] = col_suffixed_external
-            # qa_no_column은 pivot에서 왔을 가능성
-            elif col_name == self.config["qa_no_column"] and col_suffixed_pivot in merged_result.columns:
-                 final_cols_mapping[col_name] = col_suffixed_pivot
+    def _filter_data(self):
+        if self.merged_df.empty or self.config["result_column"] not in self.merged_df.columns:
+            return pd.DataFrame()
+        return self.merged_df[self.merged_df[self.config["result_column"]].isin(['NG', 'BK'])].copy()
 
-        # 원하는 순서대로 실제 존재하는 컬럼 리스트 생성
-        final_cols_existing_suffixed = [final_cols_mapping[col] for col in desired_order if col in final_cols_mapping]
-        
-        # 존재하는 컬럼만 선택하고 복사
-        merged_result = merged_result[final_cols_existing_suffixed].copy()
+    def _create_pivot_table(self, filtered_df):
+        """
+        Bug용 Pivot 테이블 생성.
+        입력 filtered_df는 전처리 완료 가정 (필수 컬럼 존재).
+        """
+        id_col = self.config[self.id_column_key]
+        test_id_col = self.config["test_id_column"]
+        test_name_col = self.config["test_name_column"]
+        final_cols = [id_col, '件数', test_name_col]
 
-        # 컬럼 이름에서 suffix 제거
-        merged_result.columns = [col.replace('_pivot', '').replace('_external', '') for col in merged_result.columns]
+        # 입력 데이터 확인 (ID 컬럼 등 존재는 DataCollector에서 보장)
+        if filtered_df.empty:
+            return pd.DataFrame(columns=final_cols)
 
-        # 최종 순서 확인 (디버깅용, 필요시 주석 해제)
-        # print("Final QA Table Columns:", merged_result.columns.tolist())
-        
-        # 건수가 0인 행 제외
-        merged_result = merged_result[merged_result['件数'] > 0]
-        
-        return merged_result 
+        try:
+            # 件数 계산 (ID 컬럼의 NaN은 pivot_table에서 자동 제외)
+            pivot_count = filtered_df.pivot_table(
+                index=id_col, values=test_id_col, aggfunc='count'
+            ).reset_index().rename(columns={test_id_col: '件数'})
+
+            # 試験名 목록 생성 (컬럼 없으면 빈 값으로 채워짐 - DataCollector에서 처리)
+            pivot_test_names = filtered_df.groupby(id_col)[test_name_col] \
+                .agg(lambda x: ', '.join(sorted(set(x.dropna().astype(str))))) \
+                .reset_index()
+
+            # 병합 (pivot_count가 기준)
+            if pivot_count.empty: # NG/BK가 하나도 없는 경우
+                 return pd.DataFrame(columns=final_cols)
+            else:
+                 merged_pivot = pd.merge(pivot_count, pivot_test_names, on=id_col, how='left')
+                 merged_pivot[test_name_col] = merged_pivot[test_name_col].fillna('')
+                 return merged_pivot[final_cols]
+
+        except KeyError as e:
+            # test_id_col 등이 없을 경우 (DataCollector에서 걸러지지 않았다면)
+            st.error(f"Bug ピボットテーブル作成中にエラー: 必要なカラム({e})が見つかりません。")
+            return pd.DataFrame(columns=final_cols)
+
+    def _load_external_data(self):
+        """
+        외부 버그 목록 로드. DataCollector에서 전달받은 데이터 사용.
+        (데이터는 이미 전처리 되었다고 가정)
+        """
+        # hasattr 체크 제거 (DataCollector에서 항상 설정 가정)
+        if self.bug_data is not None:
+             # 전달받은 데이터 사용 (이미 전처리됨)
+             return self.bug_data.copy() # 방어적 복사
+        else:
+             st.error("BugTableCreator에 내부 버그 리스트 데이터가 전달되지 않았습니다.")
+             return None
+
+
+class QATableCreator(TableCreator):
+    def __init__(self, config, merged_df, find_external_file):
+        super().__init__(config, merged_df, find_external_file)
+        self.qa_data = None
+
+        self.id_column_key = "qa_no_column"
+        self.regex_key = "qa_regex"
+        self.template_key = "qa_pattern_template"
+        self.external_columns_key = "qa_file_columns"
+        self.merge_how = "left"
+        self.desired_order = [
+            self.config[self.id_column_key],
+            "件数", "質問者", "コメント", "回答",
+            self.config["test_name_column"], "ステータス"
+        ]
+
+    def _filter_data(self):
+        if self.merged_df.empty or self.config["result_column"] not in self.merged_df.columns:
+            return pd.DataFrame()
+        return self.merged_df[self.merged_df[self.config["result_column"]] == 'QA'].copy()
+
+    def _create_pivot_table(self, filtered_df):
+        """
+        QA용 Pivot 테이블 생성.
+        입력 filtered_df는 전처리 완료 가정 (필수 컬럼 존재).
+        """
+        id_col = self.config[self.id_column_key]
+        test_id_col = self.config["test_id_column"]
+        test_name_col = self.config["test_name_column"]
+        final_cols = [id_col, '件数', test_name_col]
+
+        if filtered_df.empty:
+            return pd.DataFrame(columns=final_cols)
+
+        try:
+            pivot_count = filtered_df.pivot_table(
+                index=id_col, values=test_id_col, aggfunc='count'
+            ).reset_index().rename(columns={test_id_col: '件数'})
+
+            pivot_test_names = filtered_df.groupby(id_col)[test_name_col] \
+                .agg(lambda x: ', '.join(sorted(set(x.dropna().astype(str))))) \
+                .reset_index()
+
+            if pivot_count.empty: # QA 결과가 하나도 없는 경우
+                 return pd.DataFrame(columns=final_cols)
+            else:
+                 merged_pivot = pd.merge(pivot_count, pivot_test_names, on=id_col, how='left')
+                 merged_pivot[test_name_col] = merged_pivot[test_name_col].fillna('')
+                 return merged_pivot[final_cols]
+
+        except KeyError as e:
+             st.error(f"QA ピボットテーブル作成中にエラー: 必要なカラム({e})が見つかりません。")
+             return pd.DataFrame(columns=final_cols)
+
+
+    def _load_external_data(self):
+        """
+        외부 QA 목록 로드. DataCollector에서 전달받은 데이터 사용.
+        (데이터는 이미 전처리 되었다고 가정)
+        """
+        if self.qa_data is not None:
+             return self.qa_data.copy() # 방어적 복사
+        else:
+             st.error("QATableCreator에 내부 QA 리스트 데이터가 전달되지 않았습니다.")
+             return None 
