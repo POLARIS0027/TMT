@@ -39,14 +39,17 @@ if __name__ == '__main__':
     # 시험표 파일 3개 생성
     for i in range(1, 4):
         test_sheet = generate_test_sheet()
-        test_sheet.to_excel(f'試験表_{i}.xlsx', index=False)
+        with pd.ExcelWriter(f'試験表_{i}.xlsx', engine='openpyxl') as writer:
+            test_sheet.to_excel(writer, sheet_name='試験表', index=False)
     
     # 버그 리스트 생성
     bug_list = generate_bug_list()
-    bug_list.to_excel('内部バグリスト.xlsx', index=False)
+    with pd.ExcelWriter('内部バグリスト.xlsx', engine='openpyxl') as writer:
+        bug_list.to_excel(writer, sheet_name='一覧', index=False)
     
     # QA 리스트 생성
     qa_list = generate_qa_list()
-    qa_list.to_excel('内部QAリスト.xlsx', index=False)
+    with pd.ExcelWriter('内部QAリスト.xlsx', engine='openpyxl') as writer:
+        qa_list.to_excel(writer, sheet_name='一覧', index=False)
     
     print("すべてのテストファイルが生成されました。") 
