@@ -68,11 +68,6 @@ class UIManager:
         
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("フォルダー選択", key="select_folder_btn"):
-                st.session_state.use_config_path = False
-                return True
-                
-        with col2:
             if st.button("設定したパスで集計開始", key="use_config_path_btn"):
                 if not config_path:
                     st.error("設定でパスが指定されていません。設定画面でパスを指定してください。")
@@ -85,7 +80,11 @@ class UIManager:
                     st.session_state.use_config_path = True
                     st.session_state.should_collect = True
                     st.rerun()
-                    return True
+                
+        with col2:
+            if st.button("フォルダー選択", key="select_folder_btn"):
+                st.session_state.use_config_path = False
+                return True
         
         if selected_folder_path:
             if not os.path.exists(selected_folder_path):
@@ -93,9 +92,7 @@ class UIManager:
                 st.session_state.folder_path = ""
                 return False
                 
-            st.write("選択したフォルダー:", selected_folder_path)
-            st.write("集計実施を押してください。")
-            if st.button("集計実施", key="collect_data_btn") or st.session_state.get("should_collect", False):
+            if st.session_state.get("should_collect", False):
                 st.session_state.should_collect = False
                 return True
         
@@ -190,7 +187,8 @@ class UIManager:
     
     def _display_detail_results(self, test_result, config):
         """상세 결과 표시"""
-        col1, col2 = st.columns([1, 4])
+        col1, col2 = st.columns([1, 4]) # 드롭다운의 폭을 조절하기 위해서 두 개의 컬럼을 사용
+        
         with col1:
             result_categories = sorted(test_result.merged_df[config["result_column"]].dropna().unique().tolist())
             selected_category = st.selectbox("表示したい試験結果を選択してください", result_categories, key="result_category")
