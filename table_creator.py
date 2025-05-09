@@ -1,6 +1,11 @@
 import re
 import pandas as pd
 import streamlit as st
+import logging
+
+# 로거 설정 (data_collector.py와 동일한 설정을 사용하거나, 필요시 다르게 설정)
+# 여기서는 data_collector.py에서 이미 설정했다고 가정하고, 동일한 로거 사용
+logger = logging.getLogger(__name__) 
 
 class TableCreator:
     def __init__(self, config, merged_df, find_external_file):
@@ -66,7 +71,12 @@ class TableCreator:
                      if col not in pivot_df.columns:
                          pivot_df[col] = 0 if col == "件数" else (None if col == id_col_name else "")
                  # external_data가 없으면 external_file_columns는 추가 X
-                 return pivot_df[final_cols].copy() if not pivot_df.empty else pd.DataFrame(columns=final_cols)
+                 if pivot_df.empty:
+                     logger.warning(f"{self.__class__.__name__}: 외부 데이터가 없고 피벗 테이블도 비어 있어 빈 테이블을 반환합니다. 최종 컬럼: {final_cols}")
+                     return pd.DataFrame(columns=final_cols)
+                 else:
+                     logger.info(f"{self.__class__.__name__}: 외부 데이터가 없어 피벗 테이블 기반으로 처리합니다. 최종 컬럼: {final_cols}")
+                     return pivot_df[final_cols].copy()
 
         # external_data의 'No' 컬럼 숫자 변환 및 NaN 처리는 DataCollector에서 이미 수행됨
         # external_data가 비어있는 경우도 DataCollector에서 처리되어 여기서는 체크 불필요
@@ -120,12 +130,12 @@ class TableCreator:
         if self.merge_how == 'right': # Bug: external 기준, No_original 사용
             if no_original_col in merged_result.columns:
                  merged_result[id_col_name] = merged_result[no_original_col].apply(
-                     lambda no: id_template.replace("{Int}", str(no)) if pd.notna(no) else None
+                     lambda no: id_template.replace("{Int}", str(int(no))) if pd.notna(no) else None
                  )
                  # No_original 사용 후 제거는 최종 컬럼 선택에서 처리
             else:
                  merged_result[id_col_name] = None
-                 st.warning(f"Could not find 'No_original' column ({no_original_col}) after merge for ID generation.")
+                 logger.warning(f"Could not find 'No_original' column ({no_original_col}) after merge for ID generation.")
             # 임시 IDNumber 및 external 'No' 제거 (기존 로직 유지)
             external_no_col = 'No_external' if 'No_external' in merged_result.columns else 'No'
             cols_to_drop = [temp_id_number_col + '_pivot', temp_id_number_col, external_no_col, no_original_col]
@@ -133,10 +143,13 @@ class TableCreator:
         else: # QA: pivot 기준, pivot의 id_col 사용
             id_col_pivot = id_col_name + '_pivot'
             if id_col_pivot in merged_result.columns:
-                 merged_result[id_col_name] = merged_result[id_col_pivot]
+                 # 숫자로 시작하는 ID 값이면 정수 변환 후 템플릿에 적용, 아니면 원본 값 사용
+                 merged_result[id_col_name] = merged_result[id_col_pivot].apply(
+                     lambda id_val: id_template.replace("{Int}", str(int(float(id_val)))) if pd.notna(id_val) and str(id_val).replace('.', '', 1).isdigit() else id_val
+                 )
                  # ID 컬럼 이름 정리가 되었으므로 _pivot 버전 제거는 최종 단계에서 처리
             elif id_col_name not in merged_result.columns and not merged_result.empty:
-                 st.warning(f"Could not find original ID column ({id_col_name} or {id_col_pivot}) after merge.")
+                 logger.warning(f"Could not find original ID column ({id_col_name} or {id_col_pivot}) after merge.")
                  merged_result[id_col_name] = None
             # 임시 IDNumber 및 external 'No', 'No_original' 제거 (기존 로직 유지)
             external_no_col = 'No_external' if 'No_external' in merged_result.columns else 'No'
@@ -229,7 +242,8 @@ class BugTableCreator(TableCreator):
 
         except KeyError as e:
             # test_id_col 등이 없을 경우 (DataCollector에서 걸러지지 않았다면)
-            st.error(f"Bug ピボットテーブル作成中にエラー: 必要なカラム({e})が見つかりません。")
+            logger.error(f"Bug ピボットテーブル作成中にエラー: 必要なカラム({e})が見つかりません。")
+            st.error(f"버그 피벗 테이블 생성 중 오류가 발생했습니다. 필요한 컬럼({e})을 찾을 수 없습니다. CLI 로그를 확인하세요.")
             return pd.DataFrame(columns=final_cols)
 
     def _load_external_data(self):
@@ -242,7 +256,8 @@ class BugTableCreator(TableCreator):
              # 전달받은 데이터 사용 (이미 전처리됨)
              return self.bug_data.copy() # 방어적 복사
         else:
-             st.error("BugTableCreator에 내부 버그 리스트 데이터가 전달되지 않았습니다.")
+             logger.error("BugTableCreator에 내부 버그 리스트 데이터가 전달되지 않았습니다.")
+             st.error("버그 테이블 생성에 필요한 내부 버그 리스트 데이터가 없습니다. CLI 로그를 확인하세요.")
              return None
 
 
@@ -297,7 +312,8 @@ class QATableCreator(TableCreator):
                  return merged_pivot[final_cols]
 
         except KeyError as e:
-             st.error(f"QA ピボットテーブル作成中にエラー: 必要なカラム({e})が見つかりません。")
+             logger.error(f"QA ピボットテーブル作成中にエラー: 必要なカラム({e})が見つかりません。")
+             st.error(f"QA 피벗 테이블 생성 중 오류가 발생했습니다. 필요한 컬럼({e})을 찾을 수 없습니다. CLI 로그를 확인하세요.")
              return pd.DataFrame(columns=final_cols)
 
 
@@ -309,5 +325,6 @@ class QATableCreator(TableCreator):
         if self.qa_data is not None:
              return self.qa_data.copy() # 방어적 복사
         else:
-             st.error("QATableCreator에 내부 QA 리스트 데이터가 전달되지 않았습니다.")
+             logger.error("QATableCreator에 내부 QA 리스트 데이터가 전달되지 않았습니다.")
+             st.error("QA 테이블 생성에 필요한 내부 QA 리스트 데이터가 없습니다. CLI 로그를 확인하세요.")
              return None 

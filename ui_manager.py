@@ -68,11 +68,6 @@ class UIManager:
         
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("フォルダー選択", key="select_folder_btn"):
-                st.session_state.use_config_path = False
-                return True
-                
-        with col2:
             if st.button("設定したパスで集計開始", key="use_config_path_btn"):
                 if not config_path:
                     st.error("設定でパスが指定されていません。設定画面でパスを指定してください。")
@@ -85,7 +80,11 @@ class UIManager:
                     st.session_state.use_config_path = True
                     st.session_state.should_collect = True
                     st.rerun()
-                    return True
+                
+        with col2:
+            if st.button("フォルダー選択", key="select_folder_btn"):
+                st.session_state.use_config_path = False
+                return True
         
         if selected_folder_path:
             if not os.path.exists(selected_folder_path):
@@ -93,9 +92,7 @@ class UIManager:
                 st.session_state.folder_path = ""
                 return False
                 
-            st.write("選択したフォルダー:", selected_folder_path)
-            st.write("集計実施を押してください。")
-            if st.button("集計実施", key="collect_data_btn") or st.session_state.get("should_collect", False):
+            if st.session_state.get("should_collect", False):
                 st.session_state.should_collect = False
                 return True
         
@@ -131,7 +128,7 @@ class UIManager:
         
         # 요약 데이터 표시
         st.markdown("<h4 style='color: #567ace; font-weight: bold;'>試験表別結果一覧</h4>", unsafe_allow_html=True)
-        st.dataframe(test_result.summary_df, use_container_width=True)
+        st.dataframe(test_result.summary_df, use_container_width=True, hide_index=True)
         
         # 시험표 상세 데이터 표시
         self._display_detail_results(test_result, config)
@@ -139,9 +136,9 @@ class UIManager:
         # 버그 테이블 표시
         st.markdown("<h4 style='color: #567ace; font-weight: bold;'>内部バグ一覧</h4>", unsafe_allow_html=True)
         if not test_result.bug_table.empty:
-            st.dataframe(test_result.bug_table, use_container_width=True)
+            st.dataframe(test_result.bug_table, use_container_width=True, hide_index=True)
             # 버그 상세보기
-            bug_numbers = sorted(test_result.merged_df[config["bug_no_column"]].dropna().unique().tolist())
+            bug_numbers = sorted(test_result.bug_table[config["bug_no_column"]].dropna().unique().tolist())
             if bug_numbers:
                 col1, col2 = st.columns([1, 4])
                 with col1:
@@ -153,7 +150,7 @@ class UIManager:
                         (test_result.merged_df[config["result_column"]].isin(['NG', 'BK']))
                     ]
                     if not bug_detail.empty:
-                        st.dataframe(bug_detail, use_container_width=True)
+                        st.dataframe(bug_detail, use_container_width=True, hide_index=True)
                     else:
                         st.warning("選択したバグ番号のデータがありません")
         else:
@@ -162,9 +159,9 @@ class UIManager:
         # QA 테이블 표시
         st.markdown("<h4 style='color: #567ace; font-weight: bold;'>内部QA一覧</h4>", unsafe_allow_html=True)
         if not test_result.qa_table.empty:
-            st.dataframe(test_result.qa_table, use_container_width=True)
+            st.dataframe(test_result.qa_table, use_container_width=True, hide_index=True)
             # QA 상세보기
-            qa_numbers = sorted(test_result.merged_df[config["qa_no_column"]].dropna().unique().tolist())
+            qa_numbers = sorted(test_result.qa_table[config["qa_no_column"]].dropna().unique().tolist())
             if qa_numbers:
                 col1, col2 = st.columns([1, 4])
                 with col1:
@@ -176,7 +173,7 @@ class UIManager:
                         (test_result.merged_df[config["result_column"]] == 'QA')
                     ]
                     if not qa_detail.empty:
-                        st.dataframe(qa_detail, use_container_width=True)
+                        st.dataframe(qa_detail, use_container_width=True, hide_index=True)
                     else:
                         st.warning("選択したQA番号のデータがありません")
         else:
@@ -190,7 +187,8 @@ class UIManager:
     
     def _display_detail_results(self, test_result, config):
         """상세 결과 표시"""
-        col1, col2 = st.columns([1, 4])
+        col1, col2 = st.columns([1, 4]) # 드롭다운의 폭을 조절하기 위해서 두 개의 컬럼을 사용
+        
         with col1:
             result_categories = sorted(test_result.merged_df[config["result_column"]].dropna().unique().tolist())
             selected_category = st.selectbox("表示したい試験結果を選択してください", result_categories, key="result_category")
@@ -199,12 +197,78 @@ class UIManager:
         if show_detail:
             detail_df = test_result.merged_df[test_result.merged_df[config["result_column"]] == selected_category]
             if not detail_df.empty:
-                st.dataframe(detail_df, use_container_width=True)
+                st.dataframe(detail_df, use_container_width=True, hide_index=True)
             else:
                 st.warning("選択したカテゴリーのデータがありません")
     
     def _display_charts(self, test_result, config):
         """차트 표시"""
+        # 날짜별 시험 결과 일람 (전체 카테고리)
+        st.markdown("<h4 style='color: #567ace; font-weight: bold;'>日付別試験結果一覧</h4>", unsafe_allow_html=True)
+        if not test_result.merged_df.empty and config["date_column"] in test_result.merged_df.columns:
+            # 날짜별로 그룹화하여 각 결과 카테고리별 개수 계산
+            date_summary = test_result.merged_df.pivot_table(
+                index=config["date_column"],
+                columns=config["result_column"],
+                values=config["test_id_column"],
+                aggfunc='count',
+                fill_value=0
+            ).reset_index()
+            
+            # 날짜 형식 조정
+            date_summary[config["date_column"]] = date_summary[config["date_column"]].dt.strftime('%Y-%m-%d')
+            
+            # 누계 행 추가
+            total_row = {}
+            total_row[config["date_column"]] = "累計"
+            
+            # 각 결과 카테고리별 합계 계산
+            for col in date_summary.columns:
+                if col != config["date_column"]:
+                    total_row[col] = date_summary[col].sum()
+            
+            # 누계 행을 데이터프레임으로 변환하고 기존 데이터프레임에 추가
+            total_df = pd.DataFrame([total_row])
+            date_summary_with_total = pd.concat([date_summary, total_df], ignore_index=True)
+            
+            # 각 날짜별 합계 열 추가
+            result_columns = [col for col in date_summary_with_total.columns if col != config["date_column"]]
+            date_summary_with_total['消化項目数'] = date_summary_with_total[result_columns].sum(axis=1)
+            
+            # 누계 행을 위한 스타일링 인덱스 확인 (마지막 행)
+            last_row_idx = len(date_summary_with_total) - 1
+            
+            # 테이블 표시 - 컬럼 너비 조정 및 누계 행 강조
+            column_config = {
+                config["date_column"]: st.column_config.TextColumn("実施日", width="small"),
+            }
+            
+            # 시험 결과 컬럼 너비 설정
+            for col in result_columns:
+                column_config[col] = st.column_config.NumberColumn(col, width="small")
+            
+            # 합계 컬럼 너비 설정
+            column_config['消化項目数'] = st.column_config.NumberColumn("消化項目数", width="small")
+            
+            # 누계 행 강조 스타일 함수
+            def highlight_last_row(row):
+                if row.name == last_row_idx:
+                    return ['background-color: #E7F0FD; font-weight: bold; border-top: 2px solid #0066CC'] * len(row)
+                return [''] * len(row)
+            
+            # 스타일이 적용된 데이터프레임 생성
+            styled_df = date_summary_with_total.style.apply(highlight_last_row, axis=1)
+            
+            # 테이블 표시
+            st.dataframe(
+                styled_df,
+                column_config=column_config,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.write("試験データがありません")
+        
         # 일별 OK 그래프
         st.markdown("<h4 style='color: #567ace; font-weight: bold;'>日付別 OK件数</h4>", unsafe_allow_html=True)
         if not test_result.daily_ok_df.empty:
