@@ -1,5 +1,6 @@
 # 가상환경
 venv/
+test_data/
 
 # Python
 __pycache__/

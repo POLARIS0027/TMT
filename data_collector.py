@@ -6,6 +6,11 @@ import streamlit as st
 from table_creator import BugTableCreator, QATableCreator
 from dataclasses import dataclass
 from typing import Protocol
+import logging
+
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s]: %(levelname)s - %(filename)s\n Line:%(lineno)d: %(message)s')
+logger = logging.getLogger(__name__)
 
 class OKCalculator(Protocol):
     """OK 계산 전략 인터페이스"""
@@ -72,7 +77,9 @@ class DataCollector:
         """데이터 수집 및 처리 파이프라인 실행"""
         # 폴더 경로 유효성 검사
         if not self.selected_folder_path or not os.path.exists(self.selected_folder_path):
-            st.error("フォルダーが選択されていないか、無効なパスです。")
+            logger.error("フォルダーが選択されていないか、無効なパスです。")
+            # UI에는 간결한 메시지 또는 상태 표시
+            st.error("선택된 폴더가 유효하지 않습니다. CLI 로그를 확인하세요.")
             return TestResult(
                 summary_df=pd.DataFrame(),
                 merged_df=pd.DataFrame(),
@@ -88,7 +95,8 @@ class DataCollector:
         
         # 엑셀 파일이 없는 경우 에러 메시지 표시
         if not excel_files:
-            st.error("指定されたフォルダーにExcelファイルが見つかりません。")
+            logger.error("指定されたフォルダーにExcelファイルが見つかりません。")
+            st.error("지정된 폴더에 Excel 파일이 없습니다. CLI 로그를 확인하세요.")
             return TestResult(
                 summary_df=pd.DataFrame(),
                 merged_df=pd.DataFrame(),
@@ -125,12 +133,12 @@ class DataCollector:
                 if file_name == self.config["bug_file_name"]:
                     bug_data = df
                     success_count += 1
-                    st.success(f"{file_name} の読み込みが完了しました。")
+                    logger.info(f"{file_name} の読み込みが完了しました。")
                     continue
                 elif file_name == self.config["qa_file_name"]:
                     qa_data = df
                     success_count += 1
-                    st.success(f"{file_name} の読み込みが完了しました。")
+                    logger.info(f"{file_name} の読み込みが完了しました。")
                     continue
                 
                 # 시험표 데이터 처리
@@ -140,12 +148,13 @@ class DataCollector:
                 self.summaries.append(counts)
                 
                 success_count += 1
-                st.success(f"{file_name} の読み込みが完了しました。")
+                logger.info(f"{file_name} の読み込みが完了しました。")
             except Exception as e:
-                st.error(f"{os.path.basename(file_path)} の読み込み中にエラーが発生しました: {str(e)}")
+                logger.error(f"{os.path.basename(file_path)} の読み込み中にエラーが発生しました: {str(e)}")
                 
         if success_count == 0:
-            st.error("有効なExcelファイルが見つかりませんでした。")
+            logger.error("有効なExcelファイルが見つかりませんでした。")
+            st.error("유효한 Excel 파일을 찾지 못했습니다. CLI 로그를 확인하세요.")
             
         # 시험표 데이터만 병합하여 반환
         self.bug_data = bug_data
@@ -169,44 +178,26 @@ class DataCollector:
 
         # 문제가 있는 항목들을 데이터프레임으로 표시
         if self.invalid_results:
-            st.error("不正な試験結果一覧：")
+            logger.warning("不正な試験結果一覧：")
             invalid_df = pd.DataFrame(self.invalid_results)
             invalid_df.columns = ['ファイル名', 'テストID', '結果']
-            st.dataframe(
-                invalid_df,
-                column_config={
-                    'ファイル名': st.column_config.TextColumn('ファイル名', width='medium'),
-                    'テストID': st.column_config.TextColumn('テストID', width='medium'),
-                    '結果': st.column_config.TextColumn('結果', width='small'),
-                },
-                hide_index=True
-            )
+            logger.warning(f"부적절한 시험 결과:\n{invalid_df.to_string()}")
+            # UI에는 요약 정보 또는 알림만 표시
+            st.warning(f"{len(self.invalid_results)}건의 부적절한 시험 결과가 있습니다. CLI 로그를 확인하세요.")
 
         if self.qa_without_no:
-            st.warning("QA番号未入力項目一覧：")
+            logger.warning("QA番号未入力項目一覧：")
             qa_df = pd.DataFrame(self.qa_without_no)
             qa_df.columns = ['ファイル名', 'テストID']
-            st.dataframe(
-                qa_df,
-                column_config={
-                    'ファイル名': st.column_config.TextColumn('ファイル名', width='medium'),
-                    'テストID': st.column_config.TextColumn('テストID', width='medium'),
-                },
-                hide_index=True
-            )
+            logger.warning(f"QA 번호 미입력 항목:\n{qa_df.to_string()}")
+            st.warning(f"{len(self.qa_without_no)}건의 QA 번호 미입력 항목이 있습니다. CLI 로그를 확인하세요.")
 
         if self.bug_without_no:
-            st.warning("バグ番号未入力項目一覧：")
+            logger.warning("バグ番号未入力項目一覧：")
             bug_df = pd.DataFrame(self.bug_without_no)
             bug_df.columns = ['ファイル名', 'テストID']
-            st.dataframe(
-                bug_df,
-                column_config={
-                    'ファイル名': st.column_config.TextColumn('ファイル名', width='medium'),
-                    'テストID': st.column_config.TextColumn('テストID', width='medium'),
-                },
-                hide_index=True
-            )
+            logger.warning(f"버그 번호 미입력 항목:\n{bug_df.to_string()}")
+            st.warning(f"{len(self.bug_without_no)}건의 버그 번호 미입력 항목이 있습니다. CLI 로그를 확인하세요.")
 
         return TestResult(
             summary_df=summary_df,
@@ -237,7 +228,7 @@ class DataCollector:
 
             # 1. 시트 존재 확인
             if sheet_name not in excel_file.sheet_names:
-                st.warning(f"'{file_name}'に'{sheet_name}'シートが存在しません。")
+                logger.warning(f"'{file_name}'に'{sheet_name}'シートが存在しません。")
                 return None
 
             # 2. 데이터 로드 및 컬럼 공백 제거
@@ -254,7 +245,7 @@ class DataCollector:
                 if external_cols_key in config:
                     required_columns = ['No'] + config[external_cols_key]
                 else:
-                    st.error(f"Config 파일에 '{external_cols_key}' 키가 없습니다.")
+                    logger.error(f"Config 파일에 '{external_cols_key}' 키가 없습니다.")
                     return None
             else:
                 # 시험표 필수 컬럼 (config 키 존재 여부 확인)
@@ -268,7 +259,7 @@ class DataCollector:
                 required_columns = [col for col in [test_id_col, result_col, date_col, bug_no_col, qa_no_col] if col] # None 제외
                 
                 if not test_name_col or test_name_col not in df.columns:
-                     st.warning(f"'{file_name}'に'{test_name_col or 'test_name_column 설정값'}'列がありません。試験名なしで処理を続行します。")
+                     logger.warning(f"'{file_name}'に'{test_name_col or 'test_name_column 설정값'}'列がありません。試験名なしで処理を続行します。")
                      # 시험명 컬럼이 없거나 config에 설정 안됐으면 빈 컬럼 추가
                      df[test_name_col if test_name_col else '시험명_임시'] = '' 
                      # 임시 이름 사용 시 config에도 반영해야 할 수 있으나, 여기서는 일단 추가만 함
@@ -278,7 +269,7 @@ class DataCollector:
 
             missing_cols = [col for col in required_columns if col not in df.columns]
             if missing_cols:
-                st.error(f"'{file_name}' ({sheet_name}シート)に必要なカラムがありません: {', '.join(missing_cols)}")
+                logger.error(f"'{file_name}' ({sheet_name}シート)に必要なカラムがありません: {', '.join(missing_cols)}")
                 return None
 
             # 4. 데이터 타입 변환 및 NaN 처리
@@ -289,7 +280,7 @@ class DataCollector:
                 initial_rows = len(df)
                 df = df.dropna(subset=['No']) # 숫자 변환 실패(NaN) 행 제거
                 if len(df) < initial_rows:
-                     st.warning(f"'{file_name}'의 'No'カラムに数値でない、または空の値が含まれる行を削除しました。")
+                     logger.warning(f"'{file_name}'의 'No'カラムに数値でない、または空の値が含まれる行を削除しました。")
                 if not df.empty:
                      df['No'] = df['No'].astype(int) # 정수형으로 변환
             else:
@@ -299,7 +290,7 @@ class DataCollector:
                 initial_rows = len(df)
                 df = df.dropna(subset=[date_col]) # 날짜 변환 실패(NaT) 행 제거
                 if len(df) < initial_rows:
-                    st.warning(f"'{file_name}'의 '{date_col}'カラムに日付でない、または空の値が含まれる行を削除しました。")
+                    logger.warning(f"'{file_name}'의 '{date_col}'カラムに日付でない、または空の値が含まれる行を削除しました。")
 
                 # 시험 결과 유효성 검사 (기존 로직 유지, result_col 사용)
                 result_col = config["result_column"]
@@ -312,7 +303,8 @@ class DataCollector:
                             'test_id': row[test_id_col],
                             'result': row[result_col]
                         })
-                    st.warning(f"'{file_name}'に不正な試験結果({invalid_results[result_col].unique()})が含まれています。")
+                    st.warning(f"'{file_name}'に不正な試験結果({invalid_results[result_col].unique()})が含まれています。CLI 로그에 상세 정보가 기록됩니다.") # UI 메시지 변경
+                    logger.warning(f"'{file_name}'에 포함된 부적절한 시험 결과: {invalid_results[[config['test_id_column'], result_col]].to_dict('records')}")
 
                 # QA/Bug 번호 누락 검사 (기존 로직 유지, 각 컬럼 사용)
                 qa_no_col = config["qa_no_column"]
@@ -327,6 +319,8 @@ class DataCollector:
                             'file_name': file_name,
                             'test_id': row[test_id_col]
                         })
+                    st.warning(f"'{file_name}'에 QA 번호가 누락된 항목이 있습니다. CLI 로그에 상세 정보가 기록됩니다.") # UI 메시지 변경
+                    logger.warning(f"'{file_name}'에 QA 번호 누락: {qa_without_no[[config['test_id_column']]].to_dict('records')}")
 
                 bug_no_col = config["bug_no_column"]
                 bug_without_no = df[
@@ -339,12 +333,14 @@ class DataCollector:
                             'file_name': file_name,
                             'test_id': row[test_id_col]
                         })
+                    st.warning(f"'{file_name}'에 버그 번호가 누락된 항목이 있습니다. CLI 로그에 상세 정보가 기록됩니다.") # UI 메시지 변경
+                    logger.warning(f"'{file_name}'에 버그 번호 누락: {bug_without_no[[config['test_id_column']]].to_dict('records')}")
 
             # 5. 정제된 데이터프레임 반환
             return df
 
         except Exception as e:
-            st.error(f"'{os.path.basename(file_path)}' ({sheet_name}シート) の読み込み・前処理中にエラーが発生しました: {str(e)}")
+            logger.error(f"'{os.path.basename(file_path)}' ({sheet_name}シート) の読み込み・前処理中にエラーが発生しました: {str(e)}")
             return None
 
     # '試験結果' 컬럼의 값을 config["result_column"]로 처리하여 카테고리별 개수를 계산
@@ -417,8 +413,8 @@ class DataCollector:
         # date_col은 전처리 단계에서 확인됨
         if self.merged_df.empty or result_col not in self.merged_df.columns or test_id_col not in self.merged_df.columns:
             # 필수 컬럼 없으면 집계 불가
-            if result_col not in self.merged_df.columns: st.error(f"OK 테이블 생성 불가: '{result_col}' 컬럼이 없습니다.")
-            if test_id_col not in self.merged_df.columns: st.error(f"OK 테이블 생성 불가: '{test_id_col}' 컬럼이 없습니다.")
+            if result_col not in self.merged_df.columns: logger.error(f"OK 테이블 생성 불가: '{result_col}' 컬럼이 없습니다.")
+            if test_id_col not in self.merged_df.columns: logger.error(f"OK 테이블 생성 불가: '{test_id_col}' 컬럼이 없습니다.")
             return pd.DataFrame(columns=final_cols)
 
         # pivot_table 생성 (오류 가능성 낮음)
@@ -431,7 +427,7 @@ class DataCollector:
                 fill_value=0
             )
         except Exception as e: # 예상치 못한 오류 처리
-             st.error(f"OK テーブル作成中に予期せぬエラーが発生しました: {e}")
+             logger.error(f"OK テーブル作成中に予期せぬエラーが発生しました: {e}")
              return pd.DataFrame(columns=final_cols)
 
         # 'OK' 컬럼이 없는 경우 처리

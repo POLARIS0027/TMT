@@ -31,9 +31,9 @@
         "qa_list_folder": ""
     },
     "user_config": {
-        "selected_folder_path": "D:\\Coding\\TMT\\test_data",
-        "bug_list_folder": "D:\\Coding\\TMT\\test_data",
-        "qa_list_folder": "D:\\Coding\\TMT\\test_data",
+        "selected_folder_path": "D:\\Coding\\test_data",
+        "bug_list_folder": "D:\\Coding\\test_data",
+        "qa_list_folder": "D:\\Coding\\test_data",
         "sheet_name": "試験表",
         "date_column": "実施日",
         "result_column": "試験結果",
