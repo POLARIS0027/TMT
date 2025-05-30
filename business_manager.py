@@ -1,4 +1,4 @@
-from data_collector import DataCollector, TestResult
+from data_collector import DataCollector, DataTestResult
 from delivery_helper import DeliveryHelper
 from folder_selector import select_folder
 from config import save_config
@@ -9,7 +9,7 @@ class BusinessManager:
     def __init__(self, config):
         self.config = config
     
-    def collect_data(self, selected_folder_path) -> TestResult:
+    def collect_data(self, selected_folder_path) -> DataTestResult:
         """데이터 수집 및 처리"""
         data_collector = DataCollector(
             selected_folder_path,

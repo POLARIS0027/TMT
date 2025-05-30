@@ -95,11 +95,11 @@ def test_ok_calculator_empty_data():
     assert len(cumulative_result) == 0
 
 def test_test_result_dataclass():
-    """TestResult 데이터클래스 테스트"""
+    """DataTestResult 데이터클래스 테스트"""
     # 빈 DataFrame들 생성
     empty_df = pd.DataFrame()
     
-    # TestResult 인스턴스 생성
+    # DataTestResult 인스턴스 생성
     result = DataTestResult(
         summary_df=empty_df,
         merged_df=empty_df,

@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 from config import load_config, save_config, DEFAULT_CONFIG
 from folder_selector import select_folder
-from data_collector import DataCollector, TestResult
+from data_collector import DataCollector, DataTestResult
 from delivery_helper import DeliveryHelper
 from ui_manager import UIManager
 from business_manager import BusinessManager
