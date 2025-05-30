@@ -45,7 +45,7 @@ class DailyOKCalculator(BaseOKCalculator, OKCalculator):
         return df[[config["date_column"], 'OK']]
 
 @dataclass
-class TestResult:
+class DataTestResult:
     """테스트 결과를 담는 데이터 클래스"""
     summary_df: pd.DataFrame
     merged_df: pd.DataFrame
@@ -73,14 +73,14 @@ class DataCollector:
         self.qa_without_no = []    # QA 번호 누락
         self.bug_without_no = []   # 버그 번호 누락
 
-    def collect_data(self) -> TestResult:
+    def collect_data(self) -> DataTestResult:
         """데이터 수집 및 처리 파이프라인 실행"""
         # 폴더 경로 유효성 검사
         if not self.selected_folder_path or not os.path.exists(self.selected_folder_path):
             logger.error("フォルダーが選択されていないか、無効なパスです。")
             # UI에는 간결한 메시지 또는 상태 표시
             st.error("선택된 폴더가 유효하지 않습니다. CLI 로그를 확인하세요.")
-            return TestResult(
+            return DataTestResult(
                 summary_df=pd.DataFrame(),
                 merged_df=pd.DataFrame(),
                 bug_table=pd.DataFrame(),
@@ -97,7 +97,7 @@ class DataCollector:
         if not excel_files:
             logger.error("指定されたフォルダーにExcelファイルが見つかりません。")
             st.error("지정된 폴더에 Excel 파일이 없습니다. CLI 로그를 확인하세요.")
-            return TestResult(
+            return DataTestResult(
                 summary_df=pd.DataFrame(),
                 merged_df=pd.DataFrame(),
                 bug_table=pd.DataFrame(),
@@ -167,7 +167,7 @@ class DataCollector:
             return pd.concat(merged_data, ignore_index=True)
         return pd.DataFrame()
 
-    def _process_data(self) -> TestResult:
+    def _process_data(self) -> DataTestResult:
         """수집된 데이터 처리"""
         summary_df = self._create_summary_dataframe()
         bug_table = self._create_bug_table()
@@ -199,7 +199,7 @@ class DataCollector:
             logger.warning(f"버그 번호 미입력 항목:\n{bug_df.to_string()}")
             st.warning(f"{len(self.bug_without_no)}건의 버그 번호 미입력 항목이 있습니다. CLI 로그를 확인하세요.")
 
-        return TestResult(
+        return DataTestResult(
             summary_df=summary_df,
             merged_df=self.merged_df,
             bug_table=bug_table,
@@ -280,7 +280,7 @@ class DataCollector:
                 initial_rows = len(df)
                 df = df.dropna(subset=['No']) # 숫자 변환 실패(NaN) 행 제거
                 if len(df) < initial_rows:
-                     logger.warning(f"'{file_name}'의 'No'カラムに数値でない、または空の値が含まれる行を削除しました。")
+                     logger.warning(f"'{file_name}'の 'No'カラムに数値でない、または空の値が含まれる行を削除しました。")
                 if not df.empty:
                      df['No'] = df['No'].astype(int) # 정수형으로 변환
             else:
@@ -290,7 +290,7 @@ class DataCollector:
                 initial_rows = len(df)
                 df = df.dropna(subset=[date_col]) # 날짜 변환 실패(NaT) 행 제거
                 if len(df) < initial_rows:
-                    logger.warning(f"'{file_name}'의 '{date_col}'カラムに日付でない、または空の値が含まれる行を削除しました。")
+                    logger.warning(f"'{file_name}'の '{date_col}'カラムに日付でない、または空の値が含まれる行を削除しました。")
 
                 # 시험 결과 유효성 검사 (기존 로직 유지, result_col 사용)
                 result_col = config["result_column"]
@@ -303,7 +303,7 @@ class DataCollector:
                             'test_id': row[test_id_col],
                             'result': row[result_col]
                         })
-                    st.warning(f"'{file_name}'に不正な試験結果({invalid_results[result_col].unique()})が含まれています。CLI 로그에 상세 정보가 기록됩니다.") # UI 메시지 변경
+                    st.warning(f"'{file_name}'に不正な試験結果({invalid_results[result_col].unique()})が含まれています。CLI 로그に 상세 정보が 기록됩니다.") # UI 메시지 변경
                     logger.warning(f"'{file_name}'에 포함된 부적절한 시험 결과: {invalid_results[[config['test_id_column'], result_col]].to_dict('records')}")
 
                 # QA/Bug 번호 누락 검사 (기존 로직 유지, 각 컬럼 사용)
