@@ -10,8 +10,8 @@ QA業務を行う時、進捗把握や週次報告のために集計を取るこ
 このアプリケーションを利用すると、エクセルを開くことなくワンクリックで毎日の進捗状況や課題が一目で把握できます。
 
 実際、毎回の集計に15分ほどかかっていましたが、毎日浪費される時間が減り、毎日の朝会や週次報告の準備にかかる時間が大幅に短縮できました。
+![TMT_light](https://github.com/user-attachments/assets/3da8a872-45e6-4550-881c-9608a148dc71)
 
-<img width="auto" alt="TMT" src="https://github.com/user-attachments/assets/73c45b2b-e309-43b9-910e-1e9a69dfa61b" />
 
 ### 主な機能
 - **📊 進捗管理**：テストデータの収集および分析を通じたリアルタイム進捗率モニタリング
@@ -24,7 +24,14 @@ QA業務を行う時、進捗把握や週次報告のために集計を取るこ
 
 ![TMT_class_diagram](https://github.com/user-attachments/assets/b1ebb663-5391-43dd-9cd3-6ec129c5d008)
 
-### 設計パターン
+### 設計思想
+**レイヤードアーキテクチャ (Layered Architecture)**：階層化された責任分離
+  - **プレゼンテーションレイヤー**: `UIManager` - UI表示とユーザー入力処理
+  - **ビジネスレイヤー**: `BusinessManager` - 業務ロジックとワークフロー制御  
+  - **データアクセスレイヤー**: `DataCollector`, `TableCreator` - データ収集・加工処理
+  - **状態管理レイヤー**: `StateManager` - アプリケーション状態の永続化
+
+### 設計パターン 
 - **ストラテジーパターン (Strategy Pattern)**：`OKCalculator`インターフェースによる様々な計算方式の実装
 - **依存性注入 (Dependency Injection)**：各マネージャークラス間の疎結合
 - **単一責任の原則 (SRP)**：各クラスごとの明確な役割分担
