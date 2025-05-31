@@ -69,8 +69,11 @@ QA業務を行う時、進捗把握や週次報告のために集計を取るこ
 ## 🛠️ 技術スタック
 ### Backend
 - **Python 3.8**：メイン開発言語
-- **Pandas**：データ処理および分析
 - **Streamlit**：Web UIフレームワーク
+- **OpenPyXL**: Excelファイル読み取り・修正・スタイリング
+- **XlsxWriter**: Excelファイル生成・ダウンロード
+- **Pandas**：データ処理および分析
+- **Tkinter**: フォルダー選択ダイアログ (Python 標準ライブラリ)
 
 ### Frontend
 - **Streamlit Components**：インタラクティブなWebインターフェース
