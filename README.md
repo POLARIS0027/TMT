@@ -22,7 +22,7 @@ QA業務を行う時、進捗把握や週次報告のために集計を取るこ
 - 類家OK数をグラフで表示
 
 ### UI
-![src1](https://github.com/user-attachments/assets/7e51f189-1a74-4473-8b74-3ded0708b35f)
+![src1](https://github.com/user-attachments/assets/18060198-6d3d-4a32-932a-ea947d6436af)
 ![src2](https://github.com/user-attachments/assets/06a08b37-db24-4a58-b131-fa415083d6e5)
 
 
